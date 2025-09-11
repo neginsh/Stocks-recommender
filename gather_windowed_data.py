@@ -31,3 +31,5 @@ def split_train_test(df):
     train_df = df.iloc[:split].reset_index(drop=True)
     test_df = df.iloc[split:].reset_index(drop=True)
     return train_df,test_df
+
+print(get_data())
