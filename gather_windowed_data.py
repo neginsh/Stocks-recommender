@@ -1,4 +1,5 @@
 import yfinance as yf
+import numpy as np
 
 
 ticker_list = [
@@ -18,11 +19,13 @@ ticker_list = [
     "WMT", "PG", "KO", "PEP", "MCD", "NKE", "COST", "DIS", "HD", "SBUX"
 ]
 
+def get_num_stocks():
+    return len(ticker_list)
 
 def get_data():
     df = yf.download(ticker_list, period='5y', progress=False)
     df = df.rename(columns={"Close": "close", "Open": "open", "High": "high", "Low": "low", "Volume": "volume"})
-    df = df[["open", "high", "low", "close", "volume"]].dropna()
+    df = df[["open", "high", "low", "close", "volume"]].fillna(np.inf)
     print("Loaded data from yfinance:", df.shape)
     return df
 

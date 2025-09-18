@@ -54,21 +54,25 @@ class StockTradingEnv(gym.Env):
     def _get_obs(self):
         start = self.current_step - self.window_size
         end = self.current_step
-        window = self.df.loc[start:end - 1, self.features].values  
 
-        mean = window.mean(axis=0)
-        std = window.std(axis=0)
-        std[std == 0] = 1.0
+        # market window (prices/volumes for all stocks)
+        window = self.df.iloc[start:end]   # shape: (window_size, N*features)
+        # normalize per feature
+        mean = window.mean()
+        std = window.std().replace(0, 1)
         norm_window = (window - mean) / std
+        market_obs = norm_window.values.flatten().astype(np.float32)
+        self.current_prices = np.array(self.df.loc[self.current_step,self.price_col], dtype=np.int16)
 
-        obs = norm_window.flatten()
-
-        self.current_price = np.array(self.df.loc[self.current_step, self.price_col], dtype=np.int16)
-        portfolio_value = self.cash + self.shares * self.current_price
+        # portfolio info
+        portfolio_value = self.cash + np.sum(self.shares * self.current_prices)
         cash_ratio = self.cash / (portfolio_value + 1e-9)
-        holdings_ratio = (self.shares * self.current_price) / (portfolio_value + 1e-9)
+        allocation_ratios = (self.shares * self.current_prices) / (portfolio_value + 1e-9)
 
-        obs = np.concatenate([obs, np.array([cash_ratio, holdings_ratio])]).astype(np.float32)
+        portfolio_obs = np.concatenate([[cash_ratio], allocation_ratios]).astype(np.float32)
+
+        # final obs
+        obs = np.concatenate([market_obs, portfolio_obs]).astype(np.float32)
         return obs
 
     def step(self, action):
@@ -95,7 +99,7 @@ class StockTradingEnv(gym.Env):
             self.done = True
 
         # new prices
-        self.current_prices = self.df.loc[self.current_step, self.price_cols].values.astype(float)
+        self.current_prices = np.array(self.df.loc[self.current_step,self.price_col], dtype=np.int16)
 
         # target dollar allocation
         target_val = (prev_val) * weights

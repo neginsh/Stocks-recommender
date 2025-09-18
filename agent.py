@@ -1,10 +1,6 @@
 """
 train_rl_trader.py
-Simple RL trading demo: discrete actions (Hold/Buy/Sell) with PPO (stable-baselines3).
-
-Usage:
-- Replace the data-loading part with your own CSV / yfinance calls as needed.
-- Run: python train_rl_trader.py
+Simple RL trading 
 """
 
 import gym
@@ -24,36 +20,53 @@ from stock_trading_env import StockTradingEnv
 # Helper functions: metrics and data
 # ---------------------------
 def compute_drawdown(returns):
-    """
-    returns: series or list of portfolio values over time
-    returns max_drawdown (positive fraction), end value
-    """
     arr = np.array(returns)
     peak = np.maximum.accumulate(arr)
     drawdown = (peak - arr) / (peak + 1e-9)
     max_dd = drawdown.max()
     return max_dd
 
-def simple_backtest(env, model=None):
+def simple_backtest(env, model=None, baseline="equal"):
     """
-    Run the environment with model (if None, run buy-and-hold) and return portfolio value series.
+    Run the environment with a trained model OR a baseline strategy.
+    
+    Args:
+        env: StockTradingEnv (multi-stock)
+        model: RL model (stable-baselines3). If None, run baseline.
+        baseline: "equal" -> equal weights, "buy_and_hold" -> buy once at start, hold.
+    
+    Returns:
+        portfolio_values: list of portfolio values over time
     """
     obs = env.reset()
-    portvals = []
-    portfolio_val = env.cash + env.shares * env.df.loc[env.current_step, env.price_col]
-    portvals.append(portfolio_val)
+    portfolio_values = []
+    
     done = False
     step = 0
+    
     while not done:
         if model is None:
-            action = 1 if step == 0 else 0  # buy at beginning, then hold => buy-and-hold
+            N = env.n_stocks
+            if baseline == "equal":
+                action = np.ones(N) / N   # rebalance equally each step
+            elif baseline == "buy_and_hold":
+                # only buy at first step, then hold weights
+                if step == 0:
+                    action = np.ones(N) / N
+                    hold_action = action.copy()
+                else:
+                    action = hold_action
+            else:
+                raise ValueError("Unknown baseline")
         else:
             action, _states = model.predict(obs, deterministic=True)
-        obs, reward, done, info = env.step(int(action))
-        portfolio_val = info["portfolio_value"]
-        portvals.append(portfolio_val)
+            action = np.clip(action, 0, 1)  # ensure valid
+        
+        obs, reward, done, info = env.step(action)
+        portfolio_values.append(info["portfolio_value"])
         step += 1
-    return portvals
+    
+    return portfolio_values
 
 # ---------------------------
 # Example main: load data, create env, train PPO
@@ -69,8 +82,8 @@ def main():
 
     # ---------- Create envs ----------
     window_size = 10
-    train_env = DummyVecEnv([lambda: StockTradingEnv(train_df, window_size=window_size, initial_cash=10_000)])
-    test_env = StockTradingEnv(test_df, window_size=window_size, initial_cash=10_000)
+    train_env = DummyVecEnv([lambda: StockTradingEnv(train_df, window_size=window_size, initial_cash=10000,N_stocks=gather_windowed_data.get_num_stocks())])
+    test_env = StockTradingEnv(test_df, window_size=window_size, initial_cash=10000,N_stocks=gather_windowed_data.get_num_stocks())
 
     # ---------- Create and train model ---------- MlpLstmPolicy,MlpLnLstmPolicy
     model = PPO("MlpPolicy", train_env, verbose=1,
@@ -81,10 +94,10 @@ def main():
     # callbacks: checkpoint and simple eval callback (here eval uses deterministic = True)
     checkpoint_cb = CheckpointCallback(save_freq=5_000, save_path="./models/", name_prefix="ppo_trader")
     eval_cb = EvalCallback(train_env, best_model_save_path="./models/best/", log_path="./logs/",
-                           eval_freq=10_000, deterministic=True, render=False)
+                           eval_freq=10000, deterministic=True, render=False)
 
     print("Starting training...")
-    model.learn(total_timesteps=50_000, callback=[checkpoint_cb, eval_cb])
+    model.learn(total_timesteps=50000, callback=[checkpoint_cb, eval_cb])
     model.save("ppo_trader_final")
 
     # ---------- Evaluate on test ----------
@@ -92,7 +105,7 @@ def main():
     portvals_agent = simple_backtest(test_env, model)
     # buy-and-hold baseline
     # create a copy of test env for buy-and-hold baseline
-    test_env_bh = StockTradingEnv(test_df, window_size=window_size, initial_cash=10_000)
+    test_env_bh = StockTradingEnv(test_df, window_size=window_size, initial_cash=10000)
     portvals_bh = simple_backtest(test_env_bh, model=None)
 
     # ---------- Metrics ----------
